@@ -26,10 +26,16 @@ on purpose. The weak spots are listed in [docs/threat-model.md](docs/threat-mode
 | 1 | Threat model, architecture, repo setup, CI | Yes |
 | 2 | Synthetic data, mock banking tools, a basic assistant with no defenses | Yes |
 | 3 | Retrieval over policy docs with citations, the email-triage assistant, a tamper-evident audit log | Yes |
-| 4 | Attack suite and baseline numbers | Next |
-| 5–6 | Defenses: hard rules in code first, then classifiers and PII filters | |
+| 4 | Attack suite and baseline numbers | Yes |
+| 5–6 | Defenses: hard rules in code first, then classifiers and PII filters | Next |
 | 7 | Held-out and adaptive attacks, a second model | |
 | 8 | E-23 style validation write-up and a demo video | |
+
+The first baseline run (no defenses, `llama3.2:3b`, on PostgreSQL) is in
+[reports/baseline-dev.md](reports/baseline-dev.md) and
+[reports/baseline-heldout.md](reports/baseline-heldout.md): about 36% of dev attacks and 17% of
+held-out attacks succeeded, with no benign requests refused. That's the bar the week 5-6
+defenses have to beat. Re-run it with `python -m redteam.run`.
 
 ## Running it
 
