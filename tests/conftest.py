@@ -1,3 +1,4 @@
+import os
 from collections.abc import Iterator
 
 import pytest
@@ -36,8 +37,11 @@ def settings() -> Settings:
 
 @pytest.fixture
 def engine() -> Iterator[Engine]:
-    eng = make_engine("sqlite://")
-    init_db(eng)
+    # In-memory SQLite by default. Set COPILOT_TEST_DATABASE_URL (CI does) to run the same
+    # tests against PostgreSQL. Every test starts from freshly created, freshly seeded tables.
+    url = os.environ.get("COPILOT_TEST_DATABASE_URL") or "sqlite://"
+    eng = make_engine(url)
+    init_db(eng, reset=True)
     with make_session_factory(eng)() as db:
         seed_database(db, n_customers=5, seed=7)
     yield eng

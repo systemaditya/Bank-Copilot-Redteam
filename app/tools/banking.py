@@ -19,6 +19,7 @@ from app.rag import EmbeddingError, PolicyRetriever
 from app.tools.registry import Tool, ToolContext, ToolError, ToolRegistry
 
 MAX_TRANSACTIONS = 50
+ACCOUNT_NUMBER_MAX = 20  # matches the account_number columns in app/db.py
 _CENT = Decimal("0.01")
 _MAX_AMOUNT = Decimal("1000000000")  # sanity bound, far above any real balance
 
@@ -144,6 +145,10 @@ def initiate_transfer(
     destination = str(to_account_number).strip()
     if not destination:
         raise ToolError("A destination account number is required.")
+    if len(destination) > ACCOUNT_NUMBER_MAX:
+        # Postgres enforces the column length, so check here and give the model a clear error
+        # instead of letting the insert fail.
+        raise ToolError(f"Account numbers are at most {ACCOUNT_NUMBER_MAX} characters.")
     if destination == source.account_number:
         raise ToolError("Source and destination accounts must be different.")
     if cents > source.balance_cents:

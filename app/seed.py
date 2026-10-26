@@ -360,13 +360,22 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--customers", type=int, default=50)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--database-url", default=None, help="Defaults to COPILOT_DATABASE_URL.")
-    parser.add_argument("--reset", action="store_true", help="Drop and recreate all tables first.")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--reset", action="store_true", help="Drop and recreate all tables first.")
+    mode.add_argument(
+        "--if-empty",
+        action="store_true",
+        help="Seed only if the database has no customers yet; otherwise do nothing.",
+    )
     args = parser.parse_args(argv)
 
     engine = make_engine(args.database_url or get_settings().database_url)
     init_db(engine, reset=args.reset)
     with make_session_factory(engine)() as db:
         if db.scalar(select(Customer.id).limit(1)) is not None:
+            if args.if_empty:
+                print("Database already has data; leaving it as it is.")
+                return
             parser.error("The database already has data. Re-run with --reset to rebuild it.")
         summary = seed_database(db, n_customers=args.customers, seed=args.seed)
         sample = db.scalars(select(Customer.customer_number).order_by(Customer.id).limit(3)).all()

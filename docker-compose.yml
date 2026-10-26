@@ -1,4 +1,22 @@
+# Needs POSTGRES_PASSWORD in a .env file next to this one (see .env.example).
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: bank
+      POSTGRES_USER: copilot
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (see .env.example)}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U copilot -d bank"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    # Uncomment to reach the database from your machine (e.g. psql or a GUI) on port 5433.
+    # ports:
+    #   - "5433:5432"
+
   ollama:
     # Pin a specific tag here for reproducible experiments.
     image: ollama/ollama:latest
@@ -10,13 +28,21 @@ services:
   api:
     build: .
     environment:
+      COPILOT_DATABASE_URL: postgresql+psycopg://copilot:${POSTGRES_PASSWORD}@postgres:5432/bank
       COPILOT_OLLAMA_URL: http://ollama:11434
       COPILOT_MODEL: llama3.1:8b
       COPILOT_EMBEDDING_MODEL: nomic-embed-text
     ports:
       - "8000:8000"
+    volumes:
+      - state:/srv/state
     depends_on:
-      - ollama
+      postgres:
+        condition: service_healthy
+      ollama:
+        condition: service_started
 
 volumes:
+  pgdata: {}
   ollama: {}
+  state: {}

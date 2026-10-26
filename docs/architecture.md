@@ -17,7 +17,7 @@ These describe the code as of week 3.
 | `app/tools/registry.py` | Describes the tools to the model, checks the arguments it sends, and runs the calls |
 | `app/tools/banking.py` | Customer tools, with the baseline holes marked T3 to T8 |
 | `app/tools/staff.py` | Triage tools (T13 lives here) |
-| `app/db.py` | SQLAlchemy models. Money is stored as whole cents |
+| `app/db.py` | SQLAlchemy models and engine setup for SQLite or PostgreSQL. Money is stored as whole cents in `BIGINT` columns |
 | `app/seed.py` | Generates the same fake customers, staff, transactions and emails every time |
 | `app/cli_chat.py` | A terminal chat that prints each tool call, which I use for poking at it by hand |
 
@@ -101,5 +101,11 @@ time and then all together.
 - **Ground truth stays out of the model's view.** Seeded emails carry a `label` and
   `expected_category` for scoring, but the API and the prompt never expose them.
 - **Money is stored as whole cents**, and amounts from the model are parsed with `Decimal`.
+- **SQLite and PostgreSQL run the same code.** SQLite keeps the tests fast and the setup to zero;
+  PostgreSQL is what you'd actually deploy. CI runs the full suite on both, which is how I caught
+  the two places SQLite had been forgiving: money columns needed `BIGINT` (a Postgres `INTEGER`
+  stops at about $21M in cents), and a too-long account number from the model now gets a clean
+  tool error instead of a failed insert. Tables come from `create_all`. A real deployment would
+  want migrations (Alembic), which I've left for later.
 - **The data is the same on every run.** A fixed seed and a fixed "today" mean an attack I run
   next month hits exactly the same database as one I run today.

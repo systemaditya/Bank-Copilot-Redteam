@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from sqlalchemy import Engine, ForeignKey, String, Text, create_engine
+from sqlalchemy import BigInteger, Engine, ForeignKey, String, Text, create_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -48,7 +48,8 @@ class Account(Base):
     account_type: Mapped[str] = mapped_column(String(20))
     nickname: Mapped[str] = mapped_column(String(60))
     currency: Mapped[str] = mapped_column(String(3), default="CAD")
-    balance_cents: Mapped[int]
+    # BIGINT: a plain INTEGER is 32-bit on Postgres, which tops out around $21M in cents.
+    balance_cents: Mapped[int] = mapped_column(BigInteger)
     opened_on: Mapped[date]
 
     customer: Mapped[Customer] = relationship(back_populates="accounts")
@@ -66,7 +67,7 @@ class Transaction(Base):
     description: Mapped[str] = mapped_column(String(120))
     merchant: Mapped[str | None] = mapped_column(String(80))
     category: Mapped[str] = mapped_column(String(30))
-    amount_cents: Mapped[int]
+    amount_cents: Mapped[int] = mapped_column(BigInteger)
 
     account: Mapped[Account] = relationship(back_populates="transactions")
 
@@ -89,7 +90,7 @@ class Transfer(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     from_account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"), index=True)
     to_account_number: Mapped[str] = mapped_column(String(20))
-    amount_cents: Mapped[int]
+    amount_cents: Mapped[int] = mapped_column(BigInteger)
     memo: Mapped[str] = mapped_column(String(140), default="")
     status: Mapped[str] = mapped_column(String(12))  # pending | completed | declined
     created_at: Mapped[datetime]
@@ -152,13 +153,27 @@ class InboundEmail(Base):
     triaged_at: Mapped[datetime | None]
 
 
+def normalise_url(url: str) -> str:
+    """Let people paste a plain ``postgresql://`` URL; SQLAlchemy would otherwise look for
+    the old psycopg2 driver instead of psycopg 3."""
+    for prefix in ("postgresql://", "postgres://"):
+        if url.startswith(prefix):
+            return "postgresql+psycopg://" + url[len(prefix) :]
+    return url
+
+
 def make_engine(url: str) -> Engine:
+    url = normalise_url(url)
     kwargs: dict = {}
     if url.startswith("sqlite"):
         kwargs["connect_args"] = {"check_same_thread": False}
         if url in ("sqlite://", "sqlite:///:memory:"):
             # One shared connection so every session sees the same in-memory database.
             kwargs["poolclass"] = StaticPool
+    else:
+        # Postgres: drop dead pooled connections (e.g. after a database restart) instead of
+        # failing the next request.
+        kwargs["pool_pre_ping"] = True
     return create_engine(url, **kwargs)
 
 

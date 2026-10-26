@@ -21,6 +21,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.4"]
+# PostgreSQL driver. SQLite needs nothing extra, so this stays optional.
+postgres = ["psycopg[binary]>=3.1"]
 
 [tool.setuptools.packages.find]
 include = ["app*"]

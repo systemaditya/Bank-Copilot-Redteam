@@ -107,13 +107,35 @@ Two honest caveats. The log holds full prompts, so it contains customer PII unti
 in week 6. And a hash chain can't tell if someone cut records off the *end*; that needs the
 latest hash stored somewhere the attacker can't reach. Both are in the threat model.
 
-### With Docker
+### The database
+
+Out of the box it uses a SQLite file (`bank.db`), which is fine for poking around. It also runs
+on PostgreSQL, which is what I'd use for anything shared or long-running:
 
 ```bash
+pip install -e ".[dev,postgres]"
+export COPILOT_DATABASE_URL=postgresql://copilot:<password>@localhost:5432/bank
+python -m app.seed --reset
+```
+
+A plain `postgresql://` URL works; the app switches it to the psycopg 3 driver. Tables are
+created on startup, and `python -m app.seed --if-empty` seeds only a fresh database, which is
+what the Docker image does so restarts don't wipe your data.
+
+### With Docker
+
+Docker Compose runs the API, PostgreSQL 16 and Ollama together. Put a database password in
+`.env` first (copy `.env.example`):
+
+```bash
+cp .env.example .env            # then set POSTGRES_PASSWORD
 docker compose up --build
 docker compose exec ollama ollama pull llama3.1:8b
 docker compose exec ollama ollama pull nomic-embed-text
 ```
+
+The database lives in the `pgdata` volume, so it survives restarts. To start over, run
+`docker compose down -v`.
 
 ## Tests
 
@@ -123,6 +145,10 @@ make check
 
 That runs ruff and pytest. You don't need a model for the tests: they use a scripted fake model,
 the word-overlap search and a mocked Ollama endpoint, so CI runs them too.
+
+By default the tests use in-memory SQLite. Point them at PostgreSQL with
+`COPILOT_TEST_DATABASE_URL`, and every test gets freshly created and seeded tables there. **Use
+a throwaway database for this, since the tests drop all tables.** CI runs the suite both ways.
 
 One thing that might look odd: tests named `test_baseline_T*` check that the security holes are
 still there, and `test_known_limit_*` pin down limits I know about. That's deliberate. When I add
