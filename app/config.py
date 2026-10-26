@@ -17,7 +17,9 @@ class Settings(BaseSettings):
 
     llm_backend: str = "ollama"
     ollama_url: str = "http://localhost:11434"
-    model: str = "llama3.1:8b"
+    # Small enough to run on a laptop CPU. On a GPU, llama3.1:8b is a closer match to what a
+    # bank would actually deploy.
+    model: str = "llama3.2:3b"
     temperature: float = 0.0
     request_timeout_s: float = 120.0
 
