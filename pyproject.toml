@@ -17,6 +17,7 @@ dependencies = [
   "faker>=24",
   "pydantic>=2.6",
   "pydantic-settings>=2.2",
+  "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -25,7 +26,7 @@ dev = ["pytest>=8", "ruff>=0.4"]
 postgres = ["psycopg[binary]>=3.1"]
 
 [tool.setuptools.packages.find]
-include = ["app*"]
+include = ["app*", "redteam*"]
 
 [tool.ruff]
 line-length = 100
