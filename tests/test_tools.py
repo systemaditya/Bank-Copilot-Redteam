@@ -71,9 +71,34 @@ def test_unknown_account_is_an_error(registry, alice_ctx):
     assert "No account found" in result["error"]
 
 
-def test_lookup_policy(registry, alice_ctx):
-    result = call(registry, alice_ctx, "lookup_policy", query="international wire fee")
-    assert result["results"][0]["source"] == "fees.md"
+def test_lookup_policy_returns_citable_sections(registry, alice_ctx):
+    result = call(registry, alice_ctx, "lookup_policy", query="wire transfer fees")
+    top = result["results"][0]
+    assert top["id"] == "fees#transfer-fees"
+    assert "$45.00" in top["text"]
+    assert "Cite the id" in result["note"]
+
+
+def test_lookup_policy_reports_backend_outage(alice_ctx):
+    from app.rag import EmbeddingError, PolicyRetriever, load_chunks
+    from app.tools import customer_registry
+    from tests.conftest import POLICY_DOCS
+
+    class DownEmbedder:
+        name = "down"
+
+        def embed(self, texts):
+            raise EmbeddingError("connection refused")
+
+    registry = customer_registry(PolicyRetriever(load_chunks(POLICY_DOCS), DownEmbedder()))
+    result = call(registry, alice_ctx, "lookup_policy", query="fees")
+    assert "unavailable" in result["error"]
+
+
+def test_customer_tools_need_a_signed_in_customer(registry, db):
+    ctx = ToolContext(db=db, customer_id=None, actor="staff:S100")
+    assert "signed-in customer" in call(registry, ctx, "get_accounts")["error"]
+    assert "signed-in customer" in call(registry, ctx, "get_profile")["error"]
 
 
 # --- transfers -----------------------------------------------------------------------------

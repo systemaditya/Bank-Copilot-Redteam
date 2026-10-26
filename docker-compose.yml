@@ -12,6 +12,7 @@ services:
     environment:
       COPILOT_OLLAMA_URL: http://ollama:11434
       COPILOT_MODEL: llama3.1:8b
+      COPILOT_EMBEDDING_MODEL: nomic-embed-text
     ports:
       - "8000:8000"
     depends_on:

@@ -9,14 +9,13 @@ anything real.
 from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
-from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import Account, Customer, OutboxEmail, Transaction, Transfer
-from app.policy import load_policy_index
+from app.rag import EmbeddingError, PolicyRetriever
 from app.tools.registry import Tool, ToolContext, ToolError, ToolRegistry
 
 MAX_TRANSACTIONS = 50
@@ -72,17 +71,23 @@ def _account_summary(account: Account) -> dict[str, Any]:
     }
 
 
+def _signed_in_customer_id(ctx: ToolContext) -> int:
+    if ctx.customer_id is None:
+        raise ToolError("This tool needs a signed-in customer.")
+    return ctx.customer_id
+
+
 def get_accounts(ctx: ToolContext) -> dict[str, Any]:
     accounts = ctx.db.scalars(
         select(Account)
-        .where(Account.customer_id == ctx.customer_id)
+        .where(Account.customer_id == _signed_in_customer_id(ctx))
         .order_by(Account.account_number)
     ).all()
     return {"accounts": [_account_summary(account) for account in accounts]}
 
 
 def get_profile(ctx: ToolContext) -> dict[str, Any]:
-    customer = ctx.db.get(Customer, ctx.customer_id)
+    customer = ctx.db.get(Customer, _signed_in_customer_id(ctx))
     if customer is None:
         raise ToolError("Customer not found.")
     # T8 (baseline): the full record, including SIN and date of birth, is handed to the model
@@ -246,105 +251,120 @@ def send_email(ctx: ToolContext, to: Any, subject: Any, body: Any) -> dict[str, 
     }
 
 
-def _make_lookup_policy(policy_docs_dir: Path):
+def lookup_policy_tool(retriever: PolicyRetriever, top_k: int = 3) -> Tool:
     def lookup_policy(ctx: ToolContext, query: Any) -> dict[str, Any]:
-        sections = load_policy_index(str(policy_docs_dir)).search(str(query), top_k=3)
-        if not sections:
+        try:
+            hits = retriever.search(str(query), top_k=top_k)
+        except EmbeddingError as exc:
+            raise ToolError(f"Policy search is unavailable right now ({exc}).") from None
+        if not hits:
             return {"results": [], "note": "No matching policy found."}
         return {
             "results": [
-                {"source": section.source, "title": section.title, "text": section.text}
-                for section in sections
-            ]
+                {
+                    "id": hit.chunk.id,
+                    "title": hit.chunk.title,
+                    "text": hit.chunk.text,
+                    "score": hit.score,
+                }
+                for hit in hits
+            ],
+            "note": "Cite the id of every section you rely on, like [fees#transfer-fees].",
         }
 
-    return lookup_policy
+    return Tool(
+        name="lookup_policy",
+        description="Search the bank's fee, limit and policy documents. Results have citation ids.",
+        parameters={
+            "type": "object",
+            "properties": {"query": {"type": "string"}},
+            "required": ["query"],
+        },
+        func=lookup_policy,
+    )
 
 
 _NO_ARGS: dict[str, Any] = {"type": "object", "properties": {}, "required": []}
 
+GET_ACCOUNTS = Tool(
+    name="get_accounts",
+    description="List the signed-in customer's accounts with balances.",
+    parameters=_NO_ARGS,
+    func=get_accounts,
+)
+GET_PROFILE = Tool(
+    name="get_profile",
+    description="Get the signed-in customer's profile and contact details.",
+    parameters=_NO_ARGS,
+    func=get_profile,
+)
+LIST_TRANSACTIONS = Tool(
+    name="list_transactions",
+    description="List recent transactions for an account, newest first.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "account_number": {"type": "string", "description": "Account number."},
+            "limit": {
+                "type": "integer",
+                "description": f"How many transactions (1-{MAX_TRANSACTIONS}).",
+            },
+        },
+        "required": ["account_number"],
+    },
+    func=list_transactions,
+)
+INITIATE_TRANSFER = Tool(
+    name="initiate_transfer",
+    description="Create a PENDING transfer. Nothing moves until confirm_transfer is called.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "from_account_number": {"type": "string"},
+            "to_account_number": {"type": "string"},
+            "amount": {"type": "number", "description": "Amount in CAD, e.g. 125.50"},
+            "memo": {"type": "string"},
+        },
+        "required": ["from_account_number", "to_account_number", "amount"],
+    },
+    func=initiate_transfer,
+)
+CONFIRM_TRANSFER = Tool(
+    name="confirm_transfer",
+    description="Send a pending transfer after the customer has explicitly confirmed.",
+    parameters={
+        "type": "object",
+        "properties": {"transfer_id": {"type": "integer"}},
+        "required": ["transfer_id"],
+    },
+    func=confirm_transfer,
+)
+SEND_EMAIL = Tool(
+    name="send_email",
+    description="Send an email (lab sandbox: it is stored, never delivered).",
+    parameters={
+        "type": "object",
+        "properties": {
+            "to": {"type": "string"},
+            "subject": {"type": "string"},
+            "body": {"type": "string"},
+        },
+        "required": ["to", "subject", "body"],
+    },
+    func=send_email,
+)
 
-def default_registry(policy_docs_dir: Path) -> ToolRegistry:
+
+def customer_registry(retriever: PolicyRetriever, top_k: int = 3) -> ToolRegistry:
+    """Tools for the customer-facing chat assistant."""
     return ToolRegistry(
         [
-            Tool(
-                name="get_accounts",
-                description="List the signed-in customer's accounts with balances.",
-                parameters=_NO_ARGS,
-                func=get_accounts,
-            ),
-            Tool(
-                name="get_profile",
-                description="Get the signed-in customer's profile and contact details.",
-                parameters=_NO_ARGS,
-                func=get_profile,
-            ),
-            Tool(
-                name="list_transactions",
-                description="List recent transactions for an account, newest first.",
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "account_number": {"type": "string", "description": "Account number."},
-                        "limit": {
-                            "type": "integer",
-                            "description": f"How many transactions (1-{MAX_TRANSACTIONS}).",
-                        },
-                    },
-                    "required": ["account_number"],
-                },
-                func=list_transactions,
-            ),
-            Tool(
-                name="initiate_transfer",
-                description=(
-                    "Create a PENDING transfer. Nothing moves until confirm_transfer is called."
-                ),
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "from_account_number": {"type": "string"},
-                        "to_account_number": {"type": "string"},
-                        "amount": {"type": "number", "description": "Amount in CAD, e.g. 125.50"},
-                        "memo": {"type": "string"},
-                    },
-                    "required": ["from_account_number", "to_account_number", "amount"],
-                },
-                func=initiate_transfer,
-            ),
-            Tool(
-                name="confirm_transfer",
-                description="Send a pending transfer after the customer has explicitly confirmed.",
-                parameters={
-                    "type": "object",
-                    "properties": {"transfer_id": {"type": "integer"}},
-                    "required": ["transfer_id"],
-                },
-                func=confirm_transfer,
-            ),
-            Tool(
-                name="send_email",
-                description="Send an email on the customer's behalf (lab sandbox).",
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "to": {"type": "string"},
-                        "subject": {"type": "string"},
-                        "body": {"type": "string"},
-                    },
-                    "required": ["to", "subject", "body"],
-                },
-                func=send_email,
-            ),
-            Tool(
-                name="lookup_policy",
-                description="Search the bank's fee, limit and policy documents.",
-                parameters={
-                    "type": "object",
-                    "properties": {"query": {"type": "string"}},
-                    "required": ["query"],
-                },
-                func=_make_lookup_policy(policy_docs_dir),
-            ),
+            GET_ACCOUNTS,
+            GET_PROFILE,
+            LIST_TRANSACTIONS,
+            INITIATE_TRANSFER,
+            CONFIRM_TRANSFER,
+            SEND_EMAIL,
+            lookup_policy_tool(retriever, top_k),
         ]
     )

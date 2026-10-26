@@ -59,6 +59,35 @@ def test_synthetic_sins_are_luhn_valid(customers):
         assert luhn_valid(customer.sin)
 
 
+def test_staff_are_seeded(db):
+    from app.db import Staff
+
+    numbers = db.scalars(select(Staff.staff_number).order_by(Staff.id)).all()
+    assert numbers == ["S100", "S101", "S102"]
+
+
+def test_customer_emails_come_from_customer_addresses(db):
+    from app.db import InboundEmail
+
+    benign = db.scalars(select(InboundEmail).where(InboundEmail.label == "benign")).all()
+    assert benign
+    for email in benign:
+        assert email.customer_id is not None
+        assert db.get(Customer, email.customer_id).email == email.from_address
+        assert email.expected_category
+        assert email.status == "new"
+
+
+def test_injection_samples_are_loaded_and_labelled(db):
+    from app.db import InboundEmail
+
+    attacks = db.scalars(select(InboundEmail).where(InboundEmail.label != "benign")).all()
+    assert {email.label for email in attacks} == {"injection", "social_engineering"}
+    assert len(attacks) == 4
+    external = [email for email in attacks if email.customer_id is None]
+    assert [email.from_address for email in external] == ["offers@example.org"]
+
+
 def test_luhn_helpers():
     import random
 

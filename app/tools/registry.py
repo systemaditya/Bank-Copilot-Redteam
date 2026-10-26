@@ -21,10 +21,15 @@ class ToolError(Exception):
 
 @dataclass
 class ToolContext:
-    """Per-request context. ``customer_id`` is the customer authenticated by the API session."""
+    """Per-request context, filled in from the login session and never from the model.
+
+    ``customer_id`` is the signed-in customer, or for staff tools the customer the work is
+    about (``None`` if unknown). ``actor`` says who is driving, e.g. ``staff:S100``.
+    """
 
     db: Session
-    customer_id: int
+    customer_id: int | None
+    actor: str = ""
     clock: Callable[[], datetime] = field(default=utcnow)
 
 

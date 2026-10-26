@@ -5,4 +5,5 @@ __pycache__/
 .ruff_cache/
 .env
 *.db
+logs/
 reports/raw/

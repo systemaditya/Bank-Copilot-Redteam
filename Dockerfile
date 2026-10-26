@@ -7,7 +7,8 @@ COPY data ./data
 RUN pip install --no-cache-dir . && mkdir -p /srv/state
 
 ENV COPILOT_DATABASE_URL=sqlite:////srv/state/bank.db \
-    COPILOT_POLICY_DOCS_DIR=/srv/data/policy_docs
+    COPILOT_POLICY_DOCS_DIR=/srv/data/policy_docs \
+    COPILOT_AUDIT_LOG_PATH=/srv/state/audit.jsonl
 
 EXPOSE 8000
 # The lab database is rebuilt from the fixed seed on every start, so runs are reproducible.

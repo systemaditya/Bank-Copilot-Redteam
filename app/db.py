@@ -111,6 +111,47 @@ class OutboxEmail(Base):
     created_at: Mapped[datetime]
 
 
+class Staff(Base):
+    __tablename__ = "staff"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    staff_number: Mapped[str] = mapped_column(String(16), unique=True, index=True)
+    first_name: Mapped[str] = mapped_column(String(80))
+    last_name: Mapped[str] = mapped_column(String(80))
+    team: Mapped[str] = mapped_column(String(40))
+
+    @property
+    def full_name(self) -> str:
+        return f"{self.first_name} {self.last_name}"
+
+
+class InboundEmail(Base):
+    """An email sent to the bank, waiting for (or after) triage by staff."""
+
+    __tablename__ = "inbound_emails"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    from_address: Mapped[str] = mapped_column(String(254))
+    subject: Mapped[str] = mapped_column(String(200))
+    body: Mapped[str] = mapped_column(Text)
+    received_at: Mapped[datetime]
+    # Set when the sender's address belongs to a customer.
+    customer_id: Mapped[int | None] = mapped_column(ForeignKey("customers.id"))
+
+    # Ground truth for scoring later. The assistant never sees these two fields.
+    label: Mapped[str] = mapped_column(String(20), default="benign")
+    expected_category: Mapped[str | None] = mapped_column(String(30))
+
+    status: Mapped[str] = mapped_column(String(16), default="new")  # new | triaged | needs_review
+    triage_category: Mapped[str | None] = mapped_column(String(30))
+    triage_urgency: Mapped[str | None] = mapped_column(String(10))
+    triage_summary: Mapped[str | None] = mapped_column(Text)
+    draft_reply: Mapped[str | None] = mapped_column(Text)
+    triage_error: Mapped[str | None] = mapped_column(Text)
+    triaged_by: Mapped[str | None] = mapped_column(String(16))
+    triaged_at: Mapped[datetime | None]
+
+
 def make_engine(url: str) -> Engine:
     kwargs: dict = {}
     if url.startswith("sqlite"):

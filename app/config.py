@@ -21,11 +21,20 @@ class Settings(BaseSettings):
     temperature: float = 0.0
     request_timeout_s: float = 120.0
 
+    # "ollama" for real retrieval; "hashing" is a lexical fallback that needs no model.
+    embedding_backend: str = "ollama"
+    embedding_model: str = "nomic-embed-text"
+    rag_top_k: int = 3
+    rag_min_score: float = 0.0
+
     max_tool_rounds: int = 5
     daily_transfer_limit_cad: int = 3000
-    # Return the tool-call trace in /chat responses. Useful in the lab for scoring attacks;
-    # a production assistant would not expose it to customers.
+    # Return the tool-call trace in API responses. The attack scoring needs it; a real
+    # assistant wouldn't show it to customers.
     return_trace: bool = True
+
+    audit_enabled: bool = True
+    audit_log_path: Path = Path("logs") / "audit.jsonl"
 
 
 @lru_cache
