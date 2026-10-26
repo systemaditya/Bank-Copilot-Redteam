@@ -1,0 +1,21 @@
+services:
+  ollama:
+    # Pin a specific tag here for reproducible experiments.
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama:/root/.ollama
+
+  api:
+    build: .
+    environment:
+      COPILOT_OLLAMA_URL: http://ollama:11434
+      COPILOT_MODEL: llama3.1:8b
+    ports:
+      - "8000:8000"
+    depends_on:
+      - ollama
+
+volumes:
+  ollama: {}
