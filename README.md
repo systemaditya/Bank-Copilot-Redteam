@@ -9,8 +9,11 @@ Guideline E-23 (in force May 2027).
 A short video overview of the project:
 
 <!-- INLINE-VIDEO -->
-▶ **[Watch the video overview](https://github.com/systemaditya/bank-copilot-redteam/releases/tag/v0.5.0)** (in the v0.5 release).
+https://github.com/user-attachments/assets/ad8c3cc3-3f0c-4ccc-abd3-abfadca918e2
 <!-- /INLINE-VIDEO -->
+
+Full-resolution version is attached to the
+[v0.5 release](https://github.com/systemaditya/bank-copilot-redteam/releases/tag/v0.5.0).
 
 Most "secure chatbot" demos stop at a system prompt that says *please don't leak data*. That's a
 suggestion, not a control. This project measures how often that fails under attack, which fixes
