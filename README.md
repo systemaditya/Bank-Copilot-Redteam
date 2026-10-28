@@ -27,15 +27,27 @@ on purpose. The weak spots are listed in [docs/threat-model.md](docs/threat-mode
 | 2 | Synthetic data, mock banking tools, a basic assistant with no defenses | Yes |
 | 3 | Retrieval over policy docs with citations, the email-triage assistant, a tamper-evident audit log | Yes |
 | 4 | Attack suite and baseline numbers | Yes |
-| 5–6 | Defenses: hard rules in code first, then classifiers and PII filters | Next |
-| 7 | Held-out and adaptive attacks, a second model | |
-| 8 | E-23 style validation write-up and a demo video | |
+| 5–6 | Defenses: hard rules in code first, then PII redaction and prompt handling | Yes |
+| 7 | Adaptive attacks and a second, larger model | Not yet |
+| 8 | Model-risk validation write-up and a demo video | Write-up done; video not yet |
 
-The first baseline run (no defenses, `llama3.2:3b`, on PostgreSQL) is in
-[reports/baseline-dev.md](reports/baseline-dev.md) and
-[reports/baseline-heldout.md](reports/baseline-heldout.md): about 36% of dev attacks and 17% of
-held-out attacks succeeded, with no benign requests refused. That's the bar the week 5-6
-defenses have to beat. Re-run it with `python -m redteam.run`.
+The attack suite runs both ways on the same cases: defences off (the baseline) and on. See
+[reports/](reports/) for the numbers, and [validation/05-independent-review-report.md](validation/05-independent-review-report.md)
+for the before/after read. Re-run either with:
+
+```bash
+python -m redteam.run --defenses off     # the undefended baseline
+python -m redteam.run --defenses on      # the defended build
+```
+
+The controls live in [app/defenses.py](app/defenses.py), each behind its own switch so they can
+be measured one at a time: account-ownership checks, a daily-limit policy engine, out-of-band
+transfer confirmation (the model can't send money; the customer confirms via
+`POST /transfers/{id}/confirm`), an email recipient allow-list, sender-only triage lookups, SIN
+and date-of-birth redaction (including in the audit log), untrusted-content marking for inbound
+email, and a system-prompt canary with an output scrub. The deterministic ones hold regardless of
+what the model does; the prompt/data ones lower risk without removing it, and the write-up grades
+them separately. The whole model-risk pack (OSFI E-23 style) is in [validation/](validation/).
 
 ## Running it
 

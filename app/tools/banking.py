@@ -8,11 +8,11 @@ the red-team harness runs both ways to measure them.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import Account, Customer, OutboxEmail, Transaction, Transfer
@@ -88,14 +88,20 @@ def _require_owned(ctx: ToolContext, account: Account) -> Account:
 
 def _daily_outgoing_cents(ctx: ToolContext, customer_id: int, day: date) -> int:
     """Total of today's outgoing transfers (pending + completed) for the customer, used by the
-    daily-limit check so splitting an amount across transfers doesn't dodge the limit."""
+    daily-limit check so splitting an amount across transfers doesn't dodge the limit.
+
+    Compared as a datetime range rather than with a SQL date() cast, so it behaves the same on
+    SQLite and PostgreSQL (a date()-to-text comparison works on SQLite but not Postgres)."""
+    start = datetime.combine(day, time.min)
+    end = start + timedelta(days=1)
     rows = ctx.db.execute(
         select(Transfer.amount_cents)
         .join(Account, Transfer.from_account_id == Account.id)
         .where(
             Account.customer_id == customer_id,
             Transfer.status.in_(["pending", "completed"]),
-            func.date(Transfer.created_at) == day.isoformat(),
+            Transfer.created_at >= start,
+            Transfer.created_at < end,
         )
     ).all()
     return sum(row[0] for row in rows)

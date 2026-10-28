@@ -1,9 +1,18 @@
-# Threat model (baseline build)
+# Threat model
 
-This covers both assistants as they stand after week 3: the customer chat assistant, and the
-internal email-triage assistant that staff use on inbound customer email. The triage assistant
-is where outside text gets into a prompt, so indirect prompt injection (T10) is now a live
-threat, not a future one. Everything runs on synthetic data.
+This covers both assistants: the customer chat assistant, and the internal email-triage
+assistant that staff use on inbound customer email. The triage assistant is where outside text
+gets into a prompt, so indirect prompt injection (T10) is a live threat. Everything runs on
+synthetic data.
+
+> **Status.** Each threat below has two states. With the controls off (`COPILOT_DEFENSES_ENABLED`
+> =false) the build is the undefended baseline and the holes are open — that's what the red-team
+> baseline run measures. With the controls on (the default, and how the app runs) the
+> deterministic threats (T3, T4, T5, T6, T7, T13) are closed in code, and the prompt/data threats
+> (T2, T8, T10, T14) are reduced. Each control is in `app/defenses.py`, proven by a test in
+> `tests/test_defenses.py`, and measured in [../reports/](../reports/). The "planned control"
+> column below is now built; the before/after numbers are in the reports and the
+> [validation pack](../validation/05-independent-review-report.md).
 
 ## How the pieces connect
 
