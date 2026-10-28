@@ -25,6 +25,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from app.defenses import redact_structure
+
 GENESIS_HASH = "0" * 64
 MAX_FIELD_CHARS = 4000
 
@@ -54,9 +56,12 @@ def _clip(value: Any) -> Any:
 
 
 class AuditLog:
-    def __init__(self, path: Path, clock: Callable[[], str] = _now_iso) -> None:
+    def __init__(
+        self, path: Path, clock: Callable[[], str] = _now_iso, *, redact_pii: bool = False
+    ) -> None:
         self.path = path
         self._clock = clock
+        self.redact_pii = redact_pii
         self._lock = threading.Lock()
         self._seq, self._prev_hash = self._resume()
 
@@ -76,10 +81,15 @@ class AuditLog:
 
     def append(self, fields: dict[str, Any]) -> dict[str, Any]:
         with self._lock:
+            payload = _clip(fields)
+            if self.redact_pii:
+                # T14: mask SINs before anything is written, so a prompt or tool result that
+                # carried one doesn't sit in the log in the clear.
+                payload = redact_structure(payload)
             record = {
                 "seq": self._seq + 1,
                 "ts": self._clock(),
-                **_clip(fields),
+                **payload,
                 "prev_hash": self._prev_hash,
             }
             record["hash"] = _digest(record)
@@ -154,8 +164,8 @@ def verify(path: Path) -> VerifyResult:
     return VerifyResult(True, count)
 
 
-def make_audit_log(enabled: bool, path: Path) -> AuditLog | None:
-    return AuditLog(path) if enabled else None
+def make_audit_log(enabled: bool, path: Path, *, redact_pii: bool = False) -> AuditLog | None:
+    return AuditLog(path, redact_pii=redact_pii) if enabled else None
 
 
 def main(argv: list[str] | None = None) -> None:

@@ -8,6 +8,7 @@ from app.agent import FALLBACK_REPLY, AgentResult, ToolTrace, run_tool_loop
 from app.audit import NULL_AUDIT, RequestAudit
 from app.config import Settings
 from app.db import Customer
+from app.defenses import apply_canary, rule_sentinels, scrub_output
 from app.llm import LLMClient
 from app.tools.registry import ToolContext, ToolRegistry
 
@@ -53,13 +54,29 @@ class Copilot:
         user_message: str,
         audit: RequestAudit = NULL_AUDIT,
     ) -> AgentResult:
-        return run_tool_loop(
+        base_prompt = self.system_prompt(customer)
+        prompt = (
+            apply_canary(base_prompt, self.settings.system_prompt_canary)
+            if ctx.defenses.prompt_canary
+            else base_prompt
+        )
+        result = run_tool_loop(
             self.llm,
             self.registry,
             ctx,
-            system_prompt=self.system_prompt(customer),
+            system_prompt=prompt,
             history=history,
             user_message=user_message,
             max_rounds=self.settings.max_tool_rounds,
             audit=audit,
         )
+        if ctx.defenses.prompt_canary and not result.truncated:
+            scrubbed, leaked = scrub_output(
+                result.reply,
+                canary=self.settings.system_prompt_canary,
+                sentinels=rule_sentinels(base_prompt),
+            )
+            if leaked:
+                audit.event("prompt_leak_blocked")
+                result.reply = scrubbed
+        return result

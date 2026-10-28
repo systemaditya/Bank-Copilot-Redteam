@@ -37,6 +37,14 @@ class Settings(BaseSettings):
 
     audit_enabled: bool = True
     audit_log_path: Path = Path("logs") / "audit.jsonl"
+    audit_redact_pii: bool = True
+
+    # The security controls. On by default; set COPILOT_DEFENSES_ENABLED=false to run the
+    # undefended baseline for comparison.
+    defenses_enabled: bool = True
+    # Secret marker planted in the system prompt; if it ever shows up in a reply, the output
+    # scrub blocks the reply. Override in a real deployment.
+    system_prompt_canary: str = "MLB-CANARY-7Q2X9F"
 
 
 @lru_cache

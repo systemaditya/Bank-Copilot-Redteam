@@ -17,6 +17,7 @@ from app.auth import Principal, SessionStore
 from app.config import Settings, get_settings
 from app.copilot import Copilot
 from app.db import Customer, InboundEmail, Staff, init_db, make_engine, make_session_factory
+from app.defenses import Defenses
 from app.llm import LLMClient, LLMError, make_llm
 from app.rag import make_retriever
 from app.schemas import (
@@ -31,7 +32,8 @@ from app.schemas import (
     ToolTraceOut,
     TriageResponse,
 )
-from app.tools import ToolContext, customer_registry, staff_registry
+from app.tools import ToolContext, ToolError, customer_registry, staff_registry
+from app.tools.banking import confirm_transfer_action
 from app.tools.registry import utcnow
 from app.triage import TriageAssistant
 
@@ -50,7 +52,11 @@ def create_app(
     retriever = make_retriever(settings)
     copilot = Copilot(llm, customer_registry(retriever, settings.rag_top_k), settings)
     triage_assistant = TriageAssistant(llm, staff_registry(retriever, settings.rag_top_k), settings)
-    audit_log = make_audit_log(settings.audit_enabled, settings.audit_log_path)
+    audit_log = make_audit_log(
+        settings.audit_enabled, settings.audit_log_path, redact_pii=settings.audit_redact_pii
+    )
+    defenses = Defenses.from_settings(settings)
+    daily_limit_cents = settings.daily_transfer_limit_cad * 100
     sessions = SessionStore()
     # In-memory chat history, keyed by (customer id, conversation id) so one customer can't
     # continue another customer's conversation. Lost on restart, which is fine for the lab.
@@ -145,7 +151,13 @@ def create_app(
         audit = audit_for("chat", actor)
         audit.event("request_received", conversation_id=conversation_id, message=request.message)
 
-        ctx = ToolContext(db=db, customer_id=customer.id, actor=actor)
+        ctx = ToolContext(
+            db=db,
+            customer_id=customer.id,
+            actor=actor,
+            daily_limit_cents=daily_limit_cents,
+            defenses=defenses,
+        )
         try:
             result = copilot.respond(ctx, customer, history, request.message, audit=audit)
         except LLMError as exc:
@@ -160,6 +172,27 @@ def create_app(
             truncated=result.truncated,
             trace=trace_out(result.trace),
         )
+
+    @app.post("/transfers/{transfer_id}/confirm")
+    def confirm_transfer(transfer_id: int, customer: CurrentCustomer, db: DbSession):
+        # The customer's own action, out of band from the assistant. This is the only path that
+        # actually sends a pending transfer when out-of-band confirmation is on.
+        actor = f"customer:{customer.customer_number}"
+        audit = audit_for("transfer", actor)
+        ctx = ToolContext(
+            db=db,
+            customer_id=customer.id,
+            actor=actor,
+            daily_limit_cents=daily_limit_cents,
+            defenses=defenses,
+        )
+        try:
+            result = confirm_transfer_action(ctx, transfer_id)
+        except ToolError as exc:
+            audit.event("confirm_rejected", transfer_id=transfer_id, reason=str(exc))
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        audit.event("confirm_completed", transfer_id=transfer_id, amount=result.get("amount"))
+        return result
 
     @app.get("/triage/emails", response_model=list[EmailSummary])
     def list_emails(staff: CurrentStaff, db: DbSession, status: str | None = None):
@@ -184,7 +217,14 @@ def create_app(
         audit = audit_for("triage", actor)
         audit.event("triage_started", email_id=email.id)
 
-        ctx = ToolContext(db=db, customer_id=email.customer_id, actor=actor)
+        ctx = ToolContext(
+            db=db,
+            customer_id=email.customer_id,
+            actor=actor,
+            subject_email=email.from_address,
+            daily_limit_cents=daily_limit_cents,
+            defenses=defenses,
+        )
         try:
             outcome = triage_assistant.triage(ctx, email, audit=audit)
         except LLMError as exc:

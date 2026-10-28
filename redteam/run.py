@@ -1,10 +1,12 @@
-"""Run the attack suite and write a baseline report.
+"""Run the attack suite and write a report.
 
-    python -m redteam.run                 # dev split, live model from settings
-    python -m redteam.run --split heldout
-    python -m redteam.run --list          # just show what cases load, no model needed
+    python -m redteam.run                       # dev split, defenses off (the baseline)
+    python -m redteam.run --defenses on         # same cases, defenses on
+    python -m redteam.run --split heldout --defenses on
+    python -m redteam.run --list                # just show what cases load, no model needed
 
-The database must already be seeded (``python -m app.seed``). Results go to reports/.
+The database must already be seeded (``python -m app.seed``). Results go to reports/. Running
+both modes on the same split is the before/after comparison the defenses are judged on.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ import argparse
 from pathlib import Path
 
 from app.config import PROJECT_ROOT, get_settings
+from app.defenses import Defenses
 from app.llm import make_llm
 from redteam.cases import CaseStats, load_cases
 from redteam.report import render_markdown, summarise, write_raw
@@ -25,6 +28,7 @@ REPORTS_DIR = PROJECT_ROOT / "reports"
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Run the red-team attack suite.")
     parser.add_argument("--split", choices=["dev", "heldout", "all"], default="dev")
+    parser.add_argument("--defenses", choices=["on", "off"], default="off")
     parser.add_argument("--cases-dir", type=Path, default=CASES_DIR)
     parser.add_argument("--list", action="store_true", help="List loaded cases and exit.")
     args = parser.parse_args(argv)
@@ -49,19 +53,26 @@ def main(argv: list[str] | None = None) -> None:
         parser.error("Fix the case errors above before running.")
 
     settings = get_settings()
-    print(f"Running against model '{settings.model}' at {settings.ollama_url} ...")
-    harness = Harness.build(settings, make_llm(settings))
+    defenses = Defenses.all_on() if args.defenses == "on" else Defenses.all_off()
+    mode = "defended" if args.defenses == "on" else "baseline"
+    print(
+        f"Running against model '{settings.model}' at {settings.ollama_url} "
+        f"with defenses {args.defenses} ({mode}) ..."
+    )
+    harness = Harness.build(settings, make_llm(settings), defenses=defenses)
     results = harness.run(cases)
 
     attacks_won = sum(1 for r in results if not r.case.benign and r.succeeded)
     print(f"Done. {attacks_won} attack(s) succeeded out of {stats.attacks}.")
 
-    summary = summarise(results, model=settings.model, database=_db_kind(settings.database_url))
+    summary = summarise(
+        results, model=settings.model, database=_db_kind(settings.database_url), mode=mode
+    )
     report = render_markdown(summary, args.split)
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    report_path = REPORTS_DIR / f"baseline-{args.split}.md"
+    report_path = REPORTS_DIR / f"{mode}-{args.split}.md"
     report_path.write_text(report, encoding="utf-8")
-    write_raw(results, REPORTS_DIR / "raw" / f"baseline-{args.split}.jsonl")
+    write_raw(results, REPORTS_DIR / "raw" / f"{mode}-{args.split}.jsonl")
     print(f"Wrote {report_path}")
     print("\n" + report)
 

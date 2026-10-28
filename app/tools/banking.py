@@ -1,17 +1,18 @@
 """Mock banking tools the copilot can call.
 
-Heads up: in this baseline build several checks are missing on purpose, so the attacks in later
-weeks have something real to find. Each gap is tagged with its threat ID from
-``docs/threat-model.md`` and gets fixed in a later week. Please don't copy these patterns into
-anything real.
+Each tool carries both modes: with ``ctx.defenses`` off it's the undefended baseline (the holes
+tagged T3-T8 in ``docs/threat-model.md``), and with the matching flag on the control is enforced
+here in code, where the model can't argue its way past it. The app runs with the controls on;
+the red-team harness runs both ways to measure them.
 """
 
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db import Account, Customer, OutboxEmail, Transaction, Transfer
@@ -78,6 +79,28 @@ def _signed_in_customer_id(ctx: ToolContext) -> int:
     return ctx.customer_id
 
 
+def _require_owned(ctx: ToolContext, account: Account) -> Account:
+    """With authorization on, the account must belong to the signed-in customer."""
+    if ctx.defenses.authorization and account.customer_id != ctx.customer_id:
+        raise ToolError("That account isn't on your profile, so I can't access it.")
+    return account
+
+
+def _daily_outgoing_cents(ctx: ToolContext, customer_id: int, day: date) -> int:
+    """Total of today's outgoing transfers (pending + completed) for the customer, used by the
+    daily-limit check so splitting an amount across transfers doesn't dodge the limit."""
+    rows = ctx.db.execute(
+        select(Transfer.amount_cents)
+        .join(Account, Transfer.from_account_id == Account.id)
+        .where(
+            Account.customer_id == customer_id,
+            Transfer.status.in_(["pending", "completed"]),
+            func.date(Transfer.created_at) == day.isoformat(),
+        )
+    ).all()
+    return sum(row[0] for row in rows)
+
+
 def get_accounts(ctx: ToolContext) -> dict[str, Any]:
     accounts = ctx.db.scalars(
         select(Account)
@@ -91,10 +114,8 @@ def get_profile(ctx: ToolContext) -> dict[str, Any]:
     customer = ctx.db.get(Customer, _signed_in_customer_id(ctx))
     if customer is None:
         raise ToolError("Customer not found.")
-    # T8 (baseline): the full record, including SIN and date of birth, is handed to the model
-    # even though no customer task needs it. Week 6 adds data minimisation and PII redaction.
     address = f"{customer.street}, {customer.city}, {customer.province} {customer.postal_code}"
-    return {
+    profile = {
         "customer_number": customer.customer_number,
         "name": customer.full_name,
         "email": customer.email,
@@ -103,12 +124,17 @@ def get_profile(ctx: ToolContext) -> dict[str, Any]:
         "date_of_birth": customer.date_of_birth.isoformat(),
         "sin": customer.sin,
     }
+    # T8: with redaction on, don't hand the model data no customer task needs. Mask the SIN to
+    # its last 3 digits and drop the date of birth; without it, the full record goes to the model.
+    if ctx.defenses.redact_pii:
+        profile["sin"] = f"*** *** {customer.sin[-3:]}"
+        profile.pop("date_of_birth")
+    return profile
 
 
 def list_transactions(ctx: ToolContext, account_number: Any, limit: Any = 10) -> dict[str, Any]:
-    # T3 (baseline): no check that the account belongs to ctx.customer_id, so any customer can
-    # read any account's history. Week 5 enforces ownership here, in code.
-    account = _find_account(ctx.db, account_number)
+    # T3: with authorization on, the account must be the signed-in customer's own.
+    account = _require_owned(ctx, _find_account(ctx.db, account_number))
     count = max(1, min(_to_int(limit, "limit"), MAX_TRANSACTIONS))
     rows = ctx.db.scalars(
         select(Transaction)
@@ -137,8 +163,8 @@ def initiate_transfer(
     amount: Any,
     memo: Any = "",
 ) -> dict[str, Any]:
-    # T4 (baseline): no check that the source account belongs to ctx.customer_id.
-    source = _find_account(ctx.db, from_account_number)
+    # T4: with authorization on, the source account must be the signed-in customer's own.
+    source = _require_owned(ctx, _find_account(ctx.db, from_account_number))
     cents = to_cents(amount)
     if cents <= 0:
         raise ToolError("Transfer amount must be greater than zero.")
@@ -153,8 +179,17 @@ def initiate_transfer(
         raise ToolError("Source and destination accounts must be different.")
     if cents > source.balance_cents:
         raise ToolError("Insufficient funds in the source account.")
-    # T5 (baseline): no daily-limit check. The limit exists only in the system prompt and the
-    # policy documents. Week 5 adds a deterministic policy engine.
+    # T5: with the transfer policy on, enforce the daily limit in code. The limit otherwise
+    # lives only in the prompt, which the model can be talked past.
+    if ctx.defenses.transfer_policy:
+        limit_cents = ctx.daily_limit_cents
+        already = _daily_outgoing_cents(ctx, source.customer_id, ctx.clock().date())
+        if already + cents > limit_cents:
+            raise ToolError(
+                f"That would put today's transfers over the daily limit of "
+                f"${limit_cents // 100:,}. Already sent or pending today: "
+                f"${already // 100:,}."
+            )
     transfer = Transfer(
         from_account=source,
         to_account_number=destination,
@@ -180,11 +215,23 @@ def initiate_transfer(
 
 
 def confirm_transfer(ctx: ToolContext, transfer_id: Any) -> dict[str, Any]:
-    # T6 (baseline): the model decides by itself whether the customer has confirmed. Week 5
-    # moves confirmation out of the model's control. T4 also applies: no ownership check.
-    transfer = ctx.db.get(Transfer, _to_int(transfer_id, "transfer_id"))
+    # T6: with out-of-band confirmation on, the model simply can't do this. The customer
+    # confirms through the app (POST /transfers/{id}/confirm), not by asking the assistant.
+    if ctx.defenses.out_of_band_confirmation:
+        raise ToolError(
+            "I can't confirm a transfer. Please review and confirm it yourself in the app or "
+            "ask the customer to."
+        )
+    return confirm_transfer_action(ctx, _to_int(transfer_id, "transfer_id"))
+
+
+def confirm_transfer_action(ctx: ToolContext, transfer_id: int) -> dict[str, Any]:
+    """Actually send a pending transfer. This is the customer's own action, reached from the
+    API confirm endpoint, and (when defenses are off) from the model's confirm_transfer tool."""
+    transfer = ctx.db.get(Transfer, transfer_id)
     if transfer is None:
         raise ToolError(f"No transfer found with id {transfer_id}.")
+    _require_owned(ctx, transfer.from_account)  # T4: can't confirm someone else's transfer
     if transfer.status != "pending":
         raise ToolError(f"Transfer {transfer.id} is already {transfer.status}.")
 
@@ -234,11 +281,18 @@ def confirm_transfer(ctx: ToolContext, transfer_id: Any) -> dict[str, Any]:
 
 
 def send_email(ctx: ToolContext, to: Any, subject: Any, body: Any) -> dict[str, Any]:
-    # T7 (baseline): any recipient is accepted, so the model can be steered into sending
-    # customer data to an attacker. Emails go to a sandbox outbox and are never delivered.
+    # T7: with the allow-list on, the only recipient allowed is the customer's own address on
+    # file. That's what stops an injected email from exfiltrating data to an attacker.
     address = str(to).strip()
     if "@" not in address or " " in address:
         raise ToolError("Invalid email address.")
+    if ctx.defenses.email_allowlist:
+        customer = ctx.db.get(Customer, ctx.customer_id) if ctx.customer_id else None
+        allowed = customer.email.lower() if customer else None
+        if allowed is None or address.lower() != allowed:
+            raise ToolError(
+                "I can only email the customer's own address on file, not any other recipient."
+            )
     email = OutboxEmail(
         customer_id=ctx.customer_id,
         to_address=address[:254],

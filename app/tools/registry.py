@@ -9,6 +9,8 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.defenses import Defenses
+
 
 def utcnow() -> datetime:
     """Naive UTC timestamp (SQLite stores naive datetimes)."""
@@ -25,12 +27,18 @@ class ToolContext:
 
     ``customer_id`` is the signed-in customer, or for staff tools the customer the work is
     about (``None`` if unknown). ``actor`` says who is driving, e.g. ``staff:S100``.
+    ``subject_email`` is the inbound email's sender, used to keep triage lookups to that sender.
+    ``defenses`` says which controls are live; it defaults to all-off so the raw-tool tests see
+    the undefended baseline, and the app and runner set it explicitly.
     """
 
     db: Session
     customer_id: int | None
     actor: str = ""
     clock: Callable[[], datetime] = field(default=utcnow)
+    subject_email: str | None = None
+    daily_limit_cents: int = 300_000  # $3,000; the app/runner set this from settings
+    defenses: Defenses = field(default_factory=Defenses.all_off)
 
 
 @dataclass(frozen=True)

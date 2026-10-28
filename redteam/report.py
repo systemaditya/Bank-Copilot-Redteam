@@ -24,6 +24,7 @@ class GroupSummary:
 class Summary:
     model: str
     database: str
+    mode: str  # "baseline" or "defended"
     when: str
     attack_total: int
     benign_total: int
@@ -40,7 +41,9 @@ def _rate(results: list[CaseResult]) -> tuple[Proportion, int]:
     return wilson(hits, len(scorable)), errored
 
 
-def summarise(results: list[CaseResult], *, model: str, database: str) -> Summary:
+def summarise(
+    results: list[CaseResult], *, model: str, database: str, mode: str = "baseline"
+) -> Summary:
     attacks = [r for r in results if not r.case.benign]
     benign = [r for r in results if r.case.benign]
     attack_overall, attack_err = _rate(attacks)
@@ -57,6 +60,7 @@ def summarise(results: list[CaseResult], *, model: str, database: str) -> Summar
     return Summary(
         model=model,
         database=database,
+        mode=mode,
         when=datetime.now(UTC).isoformat(timespec="seconds"),
         attack_total=len(attacks),
         benign_total=len(benign),
@@ -86,17 +90,22 @@ def write_raw(results: list[CaseResult], path: Path) -> None:
 
 
 def render_markdown(summary: Summary, split: str) -> str:
+    if summary.mode == "defended":
+        build_line = "- Build: **defences on**. Compare against the baseline run on the same split."
+    else:
+        build_line = (
+            "- Build: **baseline, no defences**. This is the bar the defended run has to beat."
+        )
     lines = [
-        f"# Baseline red-team results ({split} split)",
+        f"# Red-team results — {summary.mode} ({split} split)",
         "",
         f"- Model: `{summary.model}`",
         f"- Database: {summary.database}",
         f"- Run at: {summary.when}",
-        "- Build: **baseline, no defenses** (weeks 1-3). These numbers are the bar week 5-6 has "
-        "to beat.",
+        build_line,
         "",
-        "> Targets vs. results: every number here is a measured result on this run, not a target. "
-        "Small sample sizes, so read the confidence intervals, not just the point estimate.",
+        "> Every number here is a measured result on this run, not a target. Small sample sizes, "
+        "so read the confidence intervals, not just the point estimate.",
         "",
         "## Headline",
         "",
@@ -124,10 +133,10 @@ def render_markdown(summary: Summary, split: str) -> str:
         "",
         "## How to read this",
         "",
-        "A high attack success rate is expected here: nothing is defended yet, and the rules live "
-        "only in the system prompt. The point is to have an honest, reproducible baseline so the "
-        "week 5-6 defenses can be measured against it, on the same cases, with false refusals "
-        "tracked so a defense can't just refuse everything.",
+        "Run both modes on the same split: the baseline shows what gets through with the rules "
+        "living only in the system prompt, and the defended run shows what the in-code controls "
+        "stop. False refusals on benign tasks are tracked alongside, so a control can't score "
+        "well just by refusing everything.",
         "",
     ]
     return "\n".join(lines)

@@ -17,6 +17,7 @@ from app.audit import NULL_AUDIT, make_audit_log
 from app.config import get_settings
 from app.copilot import Copilot
 from app.db import Customer, make_engine, make_session_factory
+from app.defenses import Defenses
 from app.llm import LLMError, make_llm
 from app.rag import make_retriever
 from app.tools import ToolContext, customer_registry
@@ -56,7 +57,13 @@ def main(argv: list[str] | None = None) -> None:
                 continue
             audit = audit_log.scope(channel="cli", actor=actor) if audit_log else NULL_AUDIT
             audit.event("request_received", message=message)
-            ctx = ToolContext(db=db, customer_id=customer.id, actor=actor)
+            ctx = ToolContext(
+                db=db,
+                customer_id=customer.id,
+                actor=actor,
+                daily_limit_cents=settings.daily_transfer_limit_cad * 100,
+                defenses=Defenses.from_settings(settings),
+            )
             try:
                 result = copilot.respond(ctx, customer, history, message, audit=audit)
             except LLMError as exc:

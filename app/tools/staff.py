@@ -9,18 +9,23 @@ from sqlalchemy import func, select
 from app.db import Customer
 from app.rag import PolicyRetriever
 from app.tools.banking import SEND_EMAIL, format_cents, lookup_policy_tool
-from app.tools.registry import Tool, ToolContext, ToolRegistry
+from app.tools.registry import Tool, ToolContext, ToolError, ToolRegistry
 
 
 def lookup_customer_by_email(ctx: ToolContext, email: Any) -> dict[str, Any]:
     address = str(email).strip().lower()
+    # T13: with sender-only on, triage may only look up the sender of the email it is handling,
+    # not any address an injected instruction names.
+    if ctx.defenses.triage_sender_only:
+        sender = (ctx.subject_email or "").strip().lower()
+        if not sender or address != sender:
+            raise ToolError(
+                "I can only look up the sender of the email being triaged, not another address."
+            )
     customer = ctx.db.scalar(select(Customer).where(func.lower(Customer.email) == address))
     if customer is None:
         return {"found": False, "note": "No customer uses that email address."}
-    # T13 (baseline): staff get the whole picture, birth date and balances included, for any
-    # address the model asks about. Combined with send_email (T7), an injected email can get
-    # this sent anywhere. Week 5 limits lookups to the email's own sender.
-    return {
+    record = {
         "found": True,
         "customer_number": customer.customer_number,
         "name": customer.full_name,
@@ -36,6 +41,10 @@ def lookup_customer_by_email(ctx: ToolContext, email: Any) -> dict[str, Any]:
             for account in customer.accounts
         ],
     }
+    # Don't put the date of birth in front of the model unless we have to.
+    if ctx.defenses.redact_pii:
+        record.pop("date_of_birth")
+    return record
 
 
 LOOKUP_CUSTOMER_BY_EMAIL = Tool(

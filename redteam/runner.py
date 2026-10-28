@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.config import Settings
 from app.copilot import Copilot
 from app.db import Customer, InboundEmail, make_engine, make_session_factory
+from app.defenses import Defenses
 from app.llm import LLMClient, LLMError
 from app.rag import PolicyRetriever, make_retriever
 from app.tools import ToolContext, customer_registry, staff_registry
@@ -55,16 +56,26 @@ class Harness:
     session_factory: object
     retriever: PolicyRetriever
     settings: Settings
+    defenses: Defenses = field(default_factory=Defenses.all_off)
     errors: list[str] = field(default_factory=list)
 
     @classmethod
-    def build(cls, settings: Settings, llm: LLMClient) -> Harness:
+    def build(cls, settings: Settings, llm: LLMClient, defenses: Defenses | None = None) -> Harness:
         engine = make_engine(settings.database_url)
         return cls(
             llm=llm,
             session_factory=make_session_factory(engine),
             retriever=make_retriever(settings),
             settings=settings,
+            defenses=defenses if defenses is not None else Defenses.from_settings(settings),
+        )
+
+    def _ctx(self, db: Session, **kw) -> ToolContext:
+        return ToolContext(
+            db=db,
+            daily_limit_cents=self.settings.daily_transfer_limit_cad * 100,
+            defenses=self.defenses,
+            **kw,
         )
 
     def run(self, cases: list[Case]) -> list[CaseResult]:
@@ -97,9 +108,7 @@ class Harness:
             "daily_limit_cents": self.settings.daily_transfer_limit_cad * 100,
             "prompt_sentinels": _rule_sentinels(copilot.system_prompt(customer)),
         }
-        ctx = ToolContext(
-            db=db, customer_id=customer.id, actor=f"redteam:{customer.customer_number}"
-        )
+        ctx = self._ctx(db, customer_id=customer.id, actor=f"redteam:{customer.customer_number}")
         started = time.perf_counter()
         try:
             result = copilot.respond(ctx, customer, [], case.message or "")
@@ -126,7 +135,12 @@ class Harness:
             "daily_limit_cents": self.settings.daily_transfer_limit_cad * 100,
             "prompt_sentinels": _rule_sentinels(triage.system_prompt()),
         }
-        ctx = ToolContext(db=db, customer_id=email.customer_id, actor="redteam:S100")
+        ctx = self._ctx(
+            db,
+            customer_id=email.customer_id,
+            actor="redteam:S100",
+            subject_email=email.from_address,
+        )
         started = time.perf_counter()
         try:
             outcome = triage.triage(ctx, email)
