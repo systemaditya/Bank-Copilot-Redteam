@@ -4,6 +4,9 @@ A banking AI assistant, built to be attacked and then hardened, with the before/
 the same cases — and documented the way a Canadian bank's model-risk team would have to under OSFI
 Guideline E-23 (in force May 2027).
 
+📽️ **Video overview:** a short walkthrough is attached to the
+[v0.5 release](https://github.com/systemaditya/bank-copilot-redteam/releases/tag/v0.5.0).
+
 Most "secure chatbot" demos stop at a system prompt that says *please don't leak data*. That's a
 suggestion, not a control. This project measures how often that fails under attack, which fixes
 actually help, and what hardening costs real customers in false refusals.
