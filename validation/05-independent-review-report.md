@@ -28,6 +28,10 @@ With answer-grounding added, the dev split's remaining attacks (the misinformati
 planted fee-waiver injection) close too, so every scored dev attack is defended. The held-out
 split still has one attack landing — a non-fee indirect injection that grounding doesn't cover.
 
+Under an **adaptive attacker** (a model that rewrites a failed attack and retries, `--adaptive 2`),
+the dev split still held at **0% (0/13)** with 0% false refusals — the deterministic controls
+don't care how the request is reworded (see [../reports/defended-adaptive-dev.md](../reports/defended-adaptive-dev.md)).
+
 By category, with defences (including answer-grounding) on:
 
 | Category | Defended result | Why |
@@ -66,9 +70,8 @@ By category, with defences (including answer-grounding) on:
 - Reviewer is not independent of development (portfolio project).
 - Small model (`llama3.2:3b`) and small samples; wide intervals. A few cases timed out on CPU
   and were excluded from the rates (noted in the reports).
-- The adaptive attacker and a second, larger model are supported by the harness
-  (`--adaptive`, `COPILOT_MODEL`) but a full campaign on a production-scale model is still future
-  work.
+- The adaptive attacker ran on the dev split (2 rounds) and didn't change the result; a longer
+  campaign and a run on a production-scale model (`COPILOT_MODEL`) are still worth doing.
 
 ## Recommendation
 
