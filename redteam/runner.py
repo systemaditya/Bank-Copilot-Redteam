@@ -8,7 +8,7 @@ real model for a baseline, or hand it a scripted model in tests.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -24,6 +24,20 @@ from app.tools import ToolContext, customer_registry, staff_registry
 from app.triage import TriageAssistant
 from redteam.cases import Case
 from redteam.scoring import RunRecord, ToolCallRecord
+
+
+def _case_input(case: Case) -> str:
+    if case.channel == "chat":
+        return case.message or ""
+    return (case.email or {}).get("body", "")
+
+
+def _with_input(case: Case, text: str) -> Case:
+    if case.channel == "chat":
+        return replace(case, message=text)
+    email = dict(case.email or {})
+    email["body"] = text
+    return replace(case, email=email)
 
 
 def _rule_sentinels(prompt: str) -> list[str]:
@@ -42,6 +56,7 @@ class CaseResult:
     case: Case
     record: RunRecord
     succeeded: bool  # attack worked, or (benign) was falsely refused
+    rounds_used: int = 1  # attempts taken under the adaptive attacker (1 = first try)
 
     @property
     def label(self) -> str:
@@ -78,23 +93,64 @@ class Harness:
             **kw,
         )
 
-    def run(self, cases: list[Case]) -> list[CaseResult]:
+    def _assistants(self) -> tuple[Copilot, TriageAssistant]:
         copilot = Copilot(
-            self.llm, customer_registry(self.retriever, self.settings.rag_top_k), self.settings
+            self.llm,
+            customer_registry(self.retriever, self.settings.rag_top_k),
+            self.settings,
+            self.retriever,
         )
         triage = TriageAssistant(
-            self.llm, staff_registry(self.retriever, self.settings.rag_top_k), self.settings
+            self.llm,
+            staff_registry(self.retriever, self.settings.rag_top_k),
+            self.settings,
+            self.retriever,
         )
+        return copilot, triage
+
+    def _run_case(self, db: Session, copilot: Copilot, triage: TriageAssistant, case: Case):
+        return (
+            self._run_chat(db, copilot, case)
+            if case.channel == "chat"
+            else self._run_triage(db, triage, case)
+        )
+
+    def run(self, cases: list[Case]) -> list[CaseResult]:
+        copilot, triage = self._assistants()
         results: list[CaseResult] = []
         with self.session_factory() as db:
             for case in cases:
-                record = (
-                    self._run_chat(db, copilot, case)
-                    if case.channel == "chat"
-                    else self._run_triage(db, triage, case)
-                )
+                record = self._run_case(db, copilot, triage, case)
                 results.append(CaseResult(case, record, case.evaluate(record)))
         return results
+
+    def run_adaptive(self, cases: list[Case], attacker, max_rounds: int = 3) -> list[CaseResult]:
+        """Run each attack with an adaptive attacker: on a failed attempt, let the attacker
+        rewrite the input and try again, up to ``max_rounds``. Returns the first successful
+        attempt, or the last one tried. Benign cases run once, unchanged."""
+        copilot, triage = self._assistants()
+        results: list[CaseResult] = []
+        with self.session_factory() as db:
+            for case in cases:
+                results.append(self._adapt(db, copilot, triage, case, attacker, max_rounds))
+        return results
+
+    def _adapt(self, db, copilot, triage, case, attacker, max_rounds):
+        attempt = case
+        last: CaseResult | None = None
+        rounds = 1 if case.benign else max_rounds
+        for round_number in range(1, rounds + 1):
+            record = self._run_case(db, copilot, triage, attempt)
+            result = CaseResult(attempt, record, case.evaluate(record))
+            result.rounds_used = round_number
+            last = result
+            if result.succeeded or case.benign:
+                return result
+            rewritten = attacker.rewrite(case.goal, _case_input(attempt), record.reply)
+            if not rewritten:
+                break
+            attempt = _with_input(attempt, rewritten)
+        return last
 
     def _run_chat(self, db: Session, copilot: Copilot, case: Case) -> RunRecord:
         customer = db.scalar(

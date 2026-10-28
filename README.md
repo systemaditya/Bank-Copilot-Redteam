@@ -28,8 +28,8 @@ on purpose. The weak spots are listed in [docs/threat-model.md](docs/threat-mode
 | 3 | Retrieval over policy docs with citations, the email-triage assistant, a tamper-evident audit log | Yes |
 | 4 | Attack suite and baseline numbers | Yes |
 | 5–6 | Defenses: hard rules in code first, then PII redaction and prompt handling | Yes |
-| 7 | Adaptive attacks and a second, larger model | Not yet |
-| 8 | Model-risk validation write-up and a demo video | Write-up done; video not yet |
+| 7 | Adaptive attacker, answer-grounding, a second-model knob | Yes |
+| 8 | Model-risk validation write-up and a demo | Write-up + [demo script](docs/demo.md) done; video optional |
 
 The attack suite runs both ways on the same cases: defences off (the baseline) and on. See
 [reports/](reports/) for the numbers, and [validation/05-independent-review-report.md](validation/05-independent-review-report.md)
@@ -45,9 +45,18 @@ be measured one at a time: account-ownership checks, a daily-limit policy engine
 transfer confirmation (the model can't send money; the customer confirms via
 `POST /transfers/{id}/confirm`), an email recipient allow-list, sender-only triage lookups, SIN
 and date-of-birth redaction (including in the audit log), untrusted-content marking for inbound
-email, and a system-prompt canary with an output scrub. The deterministic ones hold regardless of
-what the model does; the prompt/data ones lower risk without removing it, and the write-up grades
-them separately. The whole model-risk pack (OSFI E-23 style) is in [validation/](validation/).
+email, a system-prompt canary with an output scrub, and answer-grounding that blocks fee/policy
+claims the policy corpus contradicts (the misinformation case). The deterministic ones hold
+regardless of what the model does; the prompt/data ones lower risk without removing it, and the
+write-up grades them separately. The whole model-risk pack (OSFI E-23 style) is in
+[validation/](validation/), and [docs/demo.md](docs/demo.md) is a 3-minute demo script.
+
+Two more knobs for the harder tests:
+
+```bash
+python -m redteam.run --defenses on --adaptive 3   # attacker rewrites a failed attack and retries
+COPILOT_MODEL=llama3.1:8b python -m redteam.run --defenses on   # run against a larger model
+```
 
 ## Running it
 

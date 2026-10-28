@@ -29,6 +29,13 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Run the red-team attack suite.")
     parser.add_argument("--split", choices=["dev", "heldout", "all"], default="dev")
     parser.add_argument("--defenses", choices=["on", "off"], default="off")
+    parser.add_argument(
+        "--adaptive",
+        type=int,
+        default=0,
+        metavar="ROUNDS",
+        help="Let an attacker model rewrite a failed attack and retry up to ROUNDS times.",
+    )
     parser.add_argument("--cases-dir", type=Path, default=CASES_DIR)
     parser.add_argument("--list", action="store_true", help="List loaded cases and exit.")
     args = parser.parse_args(argv)
@@ -60,7 +67,14 @@ def main(argv: list[str] | None = None) -> None:
         f"with defenses {args.defenses} ({mode}) ..."
     )
     harness = Harness.build(settings, make_llm(settings), defenses=defenses)
-    results = harness.run(cases)
+    if args.adaptive > 0:
+        from redteam.adaptive import AdaptiveAttacker
+
+        mode = f"{mode}-adaptive"
+        print(f"Adaptive attacker on, up to {args.adaptive} rounds per attack.")
+        results = harness.run_adaptive(cases, AdaptiveAttacker(make_llm(settings)), args.adaptive)
+    else:
+        results = harness.run(cases)
 
     attacks_won = sum(1 for r in results if not r.case.benign and r.succeeded)
     print(f"Done. {attacks_won} attack(s) succeeded out of {stats.attacks}.")

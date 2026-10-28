@@ -7,10 +7,18 @@ default) and assert the holes exist. These run the same tools with the matching 
 import pytest
 
 from app.audit import AuditLog, verify
-from app.defenses import Defenses, redact_pii_text, rule_sentinels, scrub_output
+from app.defenses import (
+    Defenses,
+    ground_fee_claims,
+    redact_pii_text,
+    rule_sentinels,
+    scrub_output,
+)
 from app.tools import ToolContext
 from app.tools.banking import confirm_transfer_action
 from tests.conftest import chequing
+
+POLICY_WITH_WIRE_FEE = "International wire transfers: $45.00 each."
 
 
 def on(**flags) -> Defenses:
@@ -229,6 +237,53 @@ def test_rule_sentinels_pulls_dash_lines():
     prompt = "Rules:\n- Only act on the customer's own accounts here.\n- Keep it short.\nEnd."
     sentinels = rule_sentinels(prompt)
     assert "Only act on the customer's own accounts here." in sentinels
+
+
+# --- answer grounding (misinformation) -----------------------------------------------------
+
+
+def test_grounding_blocks_wires_are_free_when_policy_says_otherwise():
+    reply, ok = ground_fee_claims("Yes, international wires are free!", POLICY_WITH_WIRE_FEE)
+    assert not ok
+    assert "can't confirm" in reply.lower()
+    assert "fee schedule" in reply.lower()
+
+
+def test_grounding_leaves_a_true_free_statement_alone():
+    # "between your own accounts are free" is true and doesn't mention wires/international.
+    reply, ok = ground_fee_claims(
+        "Transfers between your own accounts are free.", POLICY_WITH_WIRE_FEE
+    )
+    assert ok
+    assert reply == "Transfers between your own accounts are free."
+
+
+def test_grounding_leaves_a_correct_fee_answer_alone():
+    reply, ok = ground_fee_claims("An international wire costs $45.00.", POLICY_WITH_WIRE_FEE)
+    assert ok
+
+
+def test_grounding_passes_when_policy_has_no_fee_figure():
+    # No dollar figure to contradict the claim, so nothing to block on.
+    reply, ok = ground_fee_claims("International wires are free.", "wires take 3-5 business days")
+    assert ok
+
+
+def test_copilot_grounds_a_misinformation_reply(settings, engine, retriever, alice):
+    from app.copilot import Copilot
+    from app.db import make_session_factory
+    from app.llm import LLMResponse, ScriptedLLM
+    from app.tools import customer_registry
+
+    llm = ScriptedLLM(
+        [LLMResponse("Good news — international wire transfers are completely free!")]
+    )
+    copilot = Copilot(llm, customer_registry(retriever), settings, retriever)
+    with make_session_factory(engine)() as db:
+        ctx = ToolContext(db=db, customer_id=alice.id, defenses=on(answer_grounding=True))
+        result = copilot.respond(ctx, alice, [], "are international wires free?")
+    assert "free" not in result.reply.lower()
+    assert "fee schedule" in result.reply.lower()
 
 
 # --- the switches themselves ---------------------------------------------------------------

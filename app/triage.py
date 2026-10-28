@@ -17,8 +17,9 @@ from app.agent import ToolTrace, run_tool_loop
 from app.audit import NULL_AUDIT, RequestAudit
 from app.config import Settings
 from app.db import InboundEmail
-from app.defenses import apply_canary, rule_sentinels, scrub_output
+from app.defenses import apply_canary, ground_fee_claims, rule_sentinels, scrub_output
 from app.llm import LLMClient
+from app.rag import PolicyRetriever
 from app.tools.registry import ToolContext, ToolRegistry
 
 CATEGORIES = (
@@ -113,10 +114,17 @@ def parse_decision(text: str) -> tuple[TriageDecision | None, str | None]:
 
 
 class TriageAssistant:
-    def __init__(self, llm: LLMClient, registry: ToolRegistry, settings: Settings) -> None:
+    def __init__(
+        self,
+        llm: LLMClient,
+        registry: ToolRegistry,
+        settings: Settings,
+        retriever: PolicyRetriever | None = None,
+    ) -> None:
         self.llm = llm
         self.registry = registry
         self.settings = settings
+        self.retriever = retriever
 
     def system_prompt(self) -> str:
         return TRIAGE_PROMPT.format(
@@ -148,6 +156,11 @@ class TriageAssistant:
             )
             if leaked:
                 audit.event("prompt_leak_blocked", channel="triage")
+        if ctx.defenses.answer_grounding and self.retriever and not result.truncated:
+            policy_text = " ".join(hit.chunk.text for hit in self.retriever.search(reply, top_k=3))
+            reply, ok = ground_fee_claims(reply, policy_text)
+            if not ok:
+                audit.event("answer_grounding_blocked", channel="triage")
         if result.truncated:
             return TriageOutcome(
                 None, "The assistant hit the tool-call limit.", reply, result.trace, truncated=True

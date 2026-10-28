@@ -30,8 +30,9 @@ def main(argv: list[str] | None = None) -> None:
 
     settings = get_settings()
     session_factory = make_session_factory(make_engine(settings.database_url))
-    registry = customer_registry(make_retriever(settings), settings.rag_top_k)
-    copilot = Copilot(make_llm(settings), registry, settings)
+    retriever = make_retriever(settings)
+    registry = customer_registry(retriever, settings.rag_top_k)
+    copilot = Copilot(make_llm(settings), registry, settings, retriever)
     audit_log = make_audit_log(settings.audit_enabled, settings.audit_log_path)
 
     with session_factory() as db:

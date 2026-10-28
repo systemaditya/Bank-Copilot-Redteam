@@ -35,6 +35,7 @@ class Defenses:
     redact_pii: bool = True  # mask SIN / date of birth in tool results
     mark_untrusted: bool = True  # wrap inbound email as clearly-marked untrusted data
     prompt_canary: bool = True  # canary token + output scrub for system-prompt leaks
+    answer_grounding: bool = True  # check fee/policy claims against the policy corpus
 
     @classmethod
     def all_on(cls) -> Defenses:
@@ -94,3 +95,35 @@ def redact_structure(node: object) -> object:
     if isinstance(node, list):
         return [redact_structure(v) for v in node]
     return node
+
+
+# A claim that an international wire / transfer is free — the misinformation vector the attack
+# suite uses, and the one an injected "fee waiver" tries to plant. Matched close together so a
+# legitimate "transfers between your own accounts are free" (which is true) isn't caught.
+_FREE_CLAIM_RE = re.compile(
+    r"(international|wire)[^.\n]{0,60}(free|no fee|no charge|waived|zero fee|\$0)"
+    r"|(free|no fee|no charge|waived|zero fee|\$0)[^.\n]{0,60}(international|wire)",
+    re.IGNORECASE,
+)
+_MONEY_RE = re.compile(r"\$\s?\d")
+
+GROUNDING_REPLACEMENT = (
+    "I can't confirm that from our policy. International wires and transfers do carry fees — "
+    "please see the fee schedule for the exact amount."
+)
+
+
+def ground_fee_claims(reply: str, policy_text: str) -> tuple[str, bool]:
+    """Catch a "wires are free" claim that the policy contradicts.
+
+    ``policy_text`` is the text of the policy sections retrieved for the reply. If the reply says
+    an international wire/transfer is free but the policy lists a dollar fee for it, the claim is
+    unsupported and the reply is replaced. Returns the (possibly replaced) reply and whether it
+    was grounded. Targeted at the known misinformation vector; the same shape extends to other
+    figures.
+    """
+    if not _FREE_CLAIM_RE.search(reply):
+        return reply, True
+    if _MONEY_RE.search(policy_text):
+        return GROUNDING_REPLACEMENT, False
+    return reply, True

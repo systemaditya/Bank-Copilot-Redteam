@@ -50,8 +50,10 @@ def create_app(
     session_factory = make_session_factory(engine)
     llm = llm or make_llm(settings)
     retriever = make_retriever(settings)
-    copilot = Copilot(llm, customer_registry(retriever, settings.rag_top_k), settings)
-    triage_assistant = TriageAssistant(llm, staff_registry(retriever, settings.rag_top_k), settings)
+    copilot = Copilot(llm, customer_registry(retriever, settings.rag_top_k), settings, retriever)
+    triage_assistant = TriageAssistant(
+        llm, staff_registry(retriever, settings.rag_top_k), settings, retriever
+    )
     audit_log = make_audit_log(
         settings.audit_enabled, settings.audit_log_path, redact_pii=settings.audit_redact_pii
     )
