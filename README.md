@@ -4,8 +4,13 @@ A banking AI assistant, built to be attacked and then hardened, with the before/
 the same cases — and documented the way a Canadian bank's model-risk team would have to under OSFI
 Guideline E-23 (in force May 2027).
 
-📽️ **Video overview:** a short walkthrough is attached to the
-[v0.5 release](https://github.com/systemaditya/bank-copilot-redteam/releases/tag/v0.5.0).
+## Demo
+
+A short video overview of the project:
+
+<!-- INLINE-VIDEO -->
+▶ **[Watch the video overview](https://github.com/systemaditya/bank-copilot-redteam/releases/tag/v0.5.0)** (in the v0.5 release).
+<!-- /INLINE-VIDEO -->
 
 Most "secure chatbot" demos stop at a system prompt that says *please don't leak data*. That's a
 suggestion, not a control. This project measures how often that fails under attack, which fixes
@@ -198,7 +203,7 @@ tests/             unit and API tests
 - The model is small so it runs on a laptop; a production build would use a larger one (a config
   switch). Samples are small, so results carry wide confidence intervals and are reported as such.
 - Misinformation-style and indirect-injection risks are reduced, not solved.
-- The E-23 pack is a student's reading of the guideline for a portfolio, not compliance advice.
+- The E-23 pack is an interpretation of the guideline for a portfolio project, not compliance advice.
 
 ## License
 
